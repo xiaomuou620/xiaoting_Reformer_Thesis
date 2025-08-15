@@ -1,0 +1,574 @@
+# h5 generation
+
+# load data and library
+
+```{r}
+# Load required libraries
+library(GenomicRanges)
+library(BSgenome.Athaliana.TAIR.TAIR9)
+library(Biostrings)
+library(rhdf5)
+
+# Load genome
+genome <- BSgenome.Athaliana.TAIR.TAIR9::Athaliana
+
+# file_path <- "/maps/projects/renlab/people/nkz325/Thesis_RBP/01_Background_generation/01_Random_Background_Generation/01_Generation_include_Intron/01_530_GrangeResults"
+
+# setwd(file_path)
+
+# Load positive and negative samples
+load("/maps/projects/renlab/people/nkz325/Thesis_RBP/01_Background_generation/01_Random_Background_Generation/02_Generation_exclude_Intron/results/ect2/ECT2_Root_neg3.Rdat")
+load("/maps/projects/renlab/people/nkz325/Thesis_RBP/01_Background_generation/01_Random_Background_Generation/02_Generation_exclude_Intron/results/ect2/ECT2_Root_pos_annotated.RData")
+
+ECT2_pos <- pos_annotated
+ECT2_neg <- filtered_random
+
+
+load("/maps/projects/renlab/people/nkz325/Thesis_RBP/01_Background_generation/01_Random_Background_Generation/02_Generation_exclude_Intron/results/alba4/ALBA4_Root_neg3.Rdat")
+load("/maps/projects/renlab/people/nkz325/Thesis_RBP/01_Background_generation/01_Random_Background_Generation/02_Generation_exclude_Intron/results/alba4/ALBA4_Root_pos_annotated.RData")
+ALBA4_pos <- pos_annotated
+ALBA4_neg <- filtered_random
+
+library(rtracklayer)
+
+gtf <- rtracklayer::import("/maps/projects/renlab/people/nkz325/Thesis_RBP/00_FILES/Araport11_GFF3_genes_transposons.201606.gtf")
+
+
+# Ensure proper style for chromosome names
+seqlevelsStyle(ECT2_pos) <- "TAIR9"
+seqlevelsStyle(ECT2_neg) <- "TAIR9"
+seqlevelsStyle(ALBA4_pos) <- "TAIR9"
+seqlevelsStyle(ALBA4_neg) <- "TAIR9"
+seqlevelsStyle(gtf) <- "TAIR9"
+seqlevelsStyle(genome) <- "TAIR9"  # align genome style
+```
+
+
+
+
+
+# check overlap
+```{r}
+filter_overlap_neg <- function(pos, neg) {
+  # Ensure inputs are GRanges
+  if (!inherits(pos, "GRanges") || !inherits(neg, "GRanges")) {
+    stop("Both 'pos' and 'neg' must be GRanges objects.")
+  }
+
+  # Find overlaps
+  overlaps <- findOverlaps(neg, pos)
+
+  # Get indices of NEG samples that overlap POS
+  overlapping_neg_idx <- unique(queryHits(overlaps))
+
+  # Filter: keep only NEG that do NOT overlap
+  neg_filtered <- neg[-overlapping_neg_idx]
+
+  # Print summary
+  message(length(overlapping_neg_idx), " NEG samples overlapped with POS and were removed.")
+  message(length(neg_filtered), " NEG samples remain.")
+
+  return(neg_filtered)
+}
+
+```
+
+```{r}
+ECT2_neg <- filter_overlap_neg(ECT2_pos, ECT2_neg)
+ALBA4_neg <- filter_overlap_neg(ALBA4_pos, ALBA4_neg)
+
+```
+# site extension
+```{r}
+# extend to 511
+extend_to_511 <- function(gr, genome) {
+  if (!requireNamespace("GenomicRanges") || !requireNamespace("IRanges")) {
+    stop("Please load GenomicRanges and IRanges packages.")
+  }
+  
+  center <- start(gr)
+  
+  new_start <- center - 255
+  new_end <- center + 255
+
+  
+  chr_lengths <- seqlengths(genome)[as.character(seqnames(gr))]
+  new_start <- pmax(new_start, 1)
+  new_end <- pmin(new_end, chr_lengths)
+  
+  new_gr <- GRanges(
+    seqnames = seqnames(gr),
+    ranges = IRanges(start = new_start, end = new_end),
+    strand = strand(gr)
+  )
+
+  mcols(new_gr) <- mcols(gr)
+  
+  return(new_gr)
+}
+
+```
+
+```{r}
+# extend samples to 511
+ECT2_pos <- extend_to_511(ECT2_pos, genome = BSgenome.Athaliana.TAIR.TAIR9)
+ECT2_neg <- extend_to_511(ECT2_neg, genome = BSgenome.Athaliana.TAIR.TAIR9)
+
+ALBA4_pos <- extend_to_511(ALBA4_pos, genome = BSgenome.Athaliana.TAIR.TAIR9)
+ALBA4_neg <- extend_to_511(ALBA4_neg, genome = BSgenome.Athaliana.TAIR.TAIR9)
+
+# check the length
+table(width(ECT2_pos))  
+table(width(ECT2_neg))
+
+```
+
+
+
+```{r}
+pos <- ALBA4_pos
+neg <- ALBA4_neg
+# pos <- ECT2_pos
+# neg <- ECT2_neg
+length(pos) + length(neg)
+length(pos)
+table(seqnames(pos))
+
+# Num of samples
+cat("POS samples:", length(pos), "\n")
+cat("NEG samples:", length(neg), "\n")
+cat("Total samples:", length(pos) + length(neg), "\n\n")
+
+
+cat("POS seqnames:\n")
+print(table(seqnames(pos)))
+
+cat("\nNEG seqnames:\n")
+print(table(seqnames(neg)))
+
+
+cat("\nPOS widths:\n")
+print(summary(width(pos)))
+
+cat("\nNEG widths:\n")
+print(summary(width(neg)))
+
+
+cat("\nAny NA in POS?:", any(is.na(start(pos)) | is.na(end(pos))), "\n")
+cat("Any NA in NEG?:", any(is.na(start(neg)) | is.na(end(neg))), "\n")
+
+
+library(GenomicRanges)
+cat("\nAny overlap between POS and NEG?:", any(countOverlaps(pos, neg) > 0), "\n")
+
+# check overlap
+overlap_hits <- countOverlaps(neg, pos)
+
+
+cat("Number of overlapping NEG sites with POS:", sum(overlap_hits > 0), "\n")
+
+# filter out overlap
+neg_filtered <- neg[overlap_hits == 0]
+
+
+cat("Number of NEG sites after filtering:", length(neg_filtered), "\n")
+
+table(seqnames(pos))
+table(seqnames(neg_filtered))
+
+```
+```{r}
+# total target number for samples
+target_total <- 60000
+
+# down-sample ALBA4
+pos <- ALBA4_pos
+neg <- neg_filtered
+# pos <- ECT2_pos
+# neg <- ECT2_neg
+
+
+cat("POS samples:", length(pos), "\n")
+cat("NEG samples:", length(neg), "\n")
+cat("Total samples:", length(pos) + length(neg), "\n\n")
+
+cat("POS seqnames:\n")
+print(table(seqnames(pos)))
+
+cat("\nNEG seqnames:\n")
+print(table(seqnames(neg)))
+
+cat("\nPOS widths:\n")
+print(summary(width(pos)))
+
+cat("\nNEG widths:\n")
+print(summary(width(neg)))
+
+cat("\nAny NA in POS?:", any(is.na(start(pos)) | is.na(end(pos))), "\n")
+cat("Any NA in NEG?:", any(is.na(start(neg)) | is.na(end(neg))), "\n")
+
+# === Remove neg tha within POS ±50bp  ===
+remove_window <- 50
+pos_expanded <- resize(pos, width = width(pos) + 2 * remove_window, fix = "center")
+overlap_hits <- countOverlaps(neg, pos_expanded)
+cat("\nNumber of NEG within ±50bp of POS:", sum(overlap_hits > 0), "\n")
+
+# filter negs
+neg_filtered <- neg[overlap_hits == 0]
+cat("Number of NEG after filtering:", length(neg_filtered), "\n")
+
+# === randomly down-sample both pos and neg，in total target_total samples ===
+
+set.seed(42)
+
+n_pos <- length(pos)
+n_neg <- length(neg_filtered)
+stopifnot(n_pos > 0, n_neg > 0)
+
+target_each <- floor(target_total / 2)
+
+target_pos <- min(target_each, length(pos))
+target_neg <- min(target_each, length(neg_filtered))
+
+cat("\nTarget POS:", target_pos, " | Target NEG:", target_neg, "\n")
+
+pos_sampled <- sample(pos, target_pos)
+neg_sampled <- sample(neg_filtered, target_neg)
+
+
+cat("Sampled POS:", length(pos_sampled), " | Sampled NEG:", length(neg_sampled), "\n")
+cat("Final total samples:", length(pos_sampled) + length(neg_sampled), "\n")
+
+# === distribution on chromosome of down-sampled samples ===
+cat("\nSampled POS seqnames distribution:\n")
+print(table(seqnames(pos_sampled)))
+
+cat("\nSampled NEG seqnames distribution:\n")
+print(table(seqnames(neg_sampled)))
+
+ALBA4_pos <- pos_sampled
+ALBA4_neg <- neg_sampled
+
+```
+
+
+
+
+# split by chr: the first half of chr2 as val, the second half of chr4 as test
+```{r}
+# Function to split GRanges by chr2 (val) and chr4 (test), remaining (chr3 or chr5) as train
+# Function to split GRanges by chr2 (val) and chr4 (test), remaining as train
+split_by_chr_regionally <- function(pos, neg) {
+  # Split chr2: first half val
+  chr2_pos <- pos[seqnames(pos) == "Chr2"]
+  chr2_neg <- neg[seqnames(neg) == "Chr2"]
+  val_pos <- chr2_pos[1:(length(chr2_pos) %/% 2)]
+  val_neg <- chr2_neg[1:(length(chr2_neg) %/% 2)]
+  
+  # Split chr4: second half test
+  chr4_pos <- pos[seqnames(pos) == "Chr4"]
+  chr4_neg <- neg[seqnames(neg) == "Chr4"]
+  test_pos <- chr4_pos[(length(chr4_pos) %/% 2 + 1):length(chr4_pos)]
+  test_neg <- chr4_neg[(length(chr4_neg) %/% 2 + 1):length(chr4_neg)]
+  
+  # Remaining as train
+  train_pos <- pos[!(pos %in% val_pos | pos %in% test_pos)]
+  train_neg <- neg[!(neg %in% val_neg | neg %in% test_neg)]
+  
+  # Print counts
+  cat("=== results ===\n")
+  cat("Val set:\n")
+  cat("  Positive:", length(val_pos), "\n")
+  cat("  Negative:", length(val_neg), "\n")
+  cat("  Total:", length(val_pos) + length(val_neg), "\n\n")
+  
+  cat("Test set:\n")
+  cat("  Positive:", length(test_pos), "\n")
+  cat("  Negative:", length(test_neg), "\n")
+  cat("  Total:", length(test_pos) + length(test_neg), "\n\n")
+  
+  cat("Train set:\n")
+  cat("  Positive:", length(train_pos), "\n")
+  cat("  Negative:", length(train_neg), "\n")
+  cat("  Total:", length(train_pos) + length(train_neg), "\n\n")
+  
+  cat("Overall:\n")
+  cat("  Original pos:", length(pos), "\n")
+  cat("  Original neg:", length(neg), "\n")
+  cat("  Split total:", length(val_pos) + length(val_neg) + 
+                      length(test_pos) + length(test_neg) + 
+                      length(train_pos) + length(train_neg), "\n")
+  
+  # Return the split data
+  list(
+    train_pos = train_pos, train_neg = train_neg,
+    val_pos = val_pos, val_neg = val_neg,
+    test_pos = test_pos, test_neg = test_neg
+  )
+}
+
+
+```
+
+
+
+
+
+# Check if out of bounds
+```{r}
+filter_out_of_bounds <- function(gr, genome) {
+  cat("Before filtering, samples total:", length(gr), "\n")
+  
+
+  common_levels <- intersect(seqlevels(gr), seqlevels(genome))
+  gr <- keepSeqlevels(gr, common_levels, pruning.mode = "coarse")
+  
+  chr_names <- as.character(seqnames(gr))
+  chr_lengths <- seqlengths(genome)[chr_names]
+  
+  missing_chr_idx <- which(is.na(chr_lengths))
+  too_small <- which(start(gr) < 1)
+  too_large <- which(end(gr) > chr_lengths)
+  
+  out_of_bounds <- unique(c(too_small, too_large, missing_chr_idx))
+  
+  if (length(out_of_bounds) == 0) {
+    cat("No out-of-bound samples detected.\n")
+    return(gr)
+  }
+  
+  gr_filtered <- gr[-out_of_bounds]
+  cat("After filtering, samples total:", length(gr_filtered), "\n")
+  cat("Samples removed:", length(out_of_bounds), "\n\n")
+  return(gr_filtered)
+}
+
+```
+
+# Dataframe format generation function: add prefix and code prefix
+```{r}
+# Dataframe generation function
+make_df <- function(gr, label, code_prefix_full) {
+  # Map full code prefix to short form
+  short_prefix_map <- c("ECT2" = "E2", "ALBA4" = "A4")
+  short_prefix <- short_prefix_map[code_prefix_full]
+
+  # Extend to 512
+  gr_ext <- resize(gr, width = width(gr) + 1, fix = "end")
+
+  # Filter out of bounds
+  gr_ext <- filter_out_of_bounds(gr_ext, genome)
+
+  seq <- as.character(getSeq(genome, gr_ext))
+
+  # select 512 long sequence
+  keep <- nchar(seq) == 512
+  seq <- seq[keep]
+  gr_ext <- gr_ext[keep]
+
+  data.frame(
+    seq = seq,
+    label = rep(label, length(seq)),
+    code_prefix = rep(short_prefix, length(seq)),
+    prefix = rep(code_prefix_full, length(seq)),
+    stringsAsFactors = FALSE
+  )
+}
+
+
+```
+
+
+```{r}
+
+ECT2_pos <- filter_out_of_bounds(ECT2_pos, genome)
+ECT2_neg <- filter_out_of_bounds(ECT2_neg, genome)
+table(seqnames(ECT2_pos))
+table(seqnames(ECT2_neg))
+
+
+ALBA4_pos <- filter_out_of_bounds(ALBA4_pos, genome)
+ALBA4_neg <- filter_out_of_bounds(ALBA4_neg, genome)
+table(seqnames(ALBA4_pos))
+table(seqnames(ALBA4_neg))
+
+
+```
+```{r}
+result1 <- split_by_chr_regionally(ECT2_pos, ECT2_neg)
+result2 <- split_by_chr_regionally(ALBA4_pos, ALBA4_neg)
+
+# result1
+# result2
+```
+
+
+
+
+
+```{r}
+table(seqnames(ECT2_pos))
+table(seqnames(ECT2_neg))
+table(seqnames(ALBA4_pos))
+table(seqnames(ALBA4_neg))
+
+```
+
+
+
+
+```{r}
+
+# Combine and shuffle dataframes
+combine_and_shuffle <- function(...) {
+  df <- do.call(rbind, list(...))
+  df[sample(nrow(df)), ]
+}
+
+# Split data
+ECT2_split <- split_by_chr_regionally(ECT2_pos, ECT2_neg)
+ALBA4_split <- split_by_chr_regionally(ALBA4_pos, ALBA4_neg)
+
+# Training set
+df_trn <- combine_and_shuffle(
+  make_df(ECT2_split$train_pos, 1, "ECT2"),
+  make_df(ECT2_split$train_neg, 0, "ECT2"),
+  make_df(ALBA4_split$train_pos, 1, "ALBA4"),
+  make_df(ALBA4_split$train_neg, 0, "ALBA4")
+)
+
+# Validation set
+df_val <- combine_and_shuffle(
+  make_df(ECT2_split$val_pos, 1, "ECT2"),
+  make_df(ECT2_split$val_neg, 0, "ECT2"),
+  make_df(ALBA4_split$val_pos, 1, "ALBA4"),
+  make_df(ALBA4_split$val_neg, 0, "ALBA4")
+)
+
+# Test set
+df_test <- combine_and_shuffle(
+  make_df(ECT2_split$test_pos, 1, "ECT2"),
+  make_df(ECT2_split$test_neg, 0, "ECT2"),
+  make_df(ALBA4_split$test_pos, 1, "ALBA4"),
+  make_df(ALBA4_split$test_neg, 0, "ALBA4")
+)
+
+# Write to HDF5
+h5file <- "combined_data.h5"
+if (file.exists(h5file)) file.remove(h5file)
+h5createFile(h5file)
+
+h5write(df_trn$seq,         h5file, "trn_seq")
+h5write(df_trn$label,       h5file, "trn_label")
+h5write(df_trn$prefix,      h5file, "trn_prefix")
+h5write(df_trn$code_prefix, h5file, "trn_code_prefix")
+
+h5write(df_val$seq,         h5file, "val_seq")
+h5write(df_val$label,       h5file, "val_label")
+h5write(df_val$prefix,      h5file, "val_prefix")
+h5write(df_val$code_prefix, h5file, "val_code_prefix")
+
+h5write(df_test$seq,         h5file, "test_seq")
+h5write(df_test$label,       h5file, "test_label")
+h5write(df_test$prefix,      h5file, "test_prefix")
+h5write(df_test$code_prefix, h5file, "test_code_prefix")
+
+h5closeAll()
+```
+
+
+# Check the file
+
+```{r}
+# h5 file generation
+library(rhdf5)
+library(Biostrings)
+```
+
+```{r}
+h5ls("combined_data.h5")
+data <- h5read("combined_data.h5", "test_seq")
+head(data)
+```
+
+```{r}
+seq_lengths <- nchar(data)
+head(seq_lengths)
+summary(seq_lengths)
+short_seqs <- data[seq_lengths < 512]
+print(short_seqs)
+
+```
+
+
+
+
+
+```{r}
+# h5ls("/maps/projects/renlab/people/nkz325/Thesis_RBP/Check_file/example_posneg.h5")
+# data <- h5read("/maps/projects/renlab/people/nkz325/Thesis_RBP/Check_file/example_posneg.h5", "test_prefix")
+```
+
+
+```{r}
+# # For reformer test
+# # Combine, shuffle and keep 1%
+# combine_shuffle_sample <- function(..., frac = 0.01) {
+#   df <- do.call(rbind, list(...))
+#   df <- df[sample(nrow(df)), ]
+#   df <- df[sample(nrow(df), max(1, floor(nrow(df) * frac))), ]
+#   return(df)
+# }
+# 
+# # Split data
+# ECT2_split <- split_by_chr_regionally(ECT2_pos, ECT2_neg)
+# ALBA4_split <- split_by_chr_regionally(ALBA4_pos, ALBA4_neg)
+# 
+# # Training set (1%)
+# df_trn <- combine_shuffle_sample(
+#   make_df(ECT2_split$train_pos, 1, "ECT2"),
+#   make_df(ECT2_split$train_neg, 0, "ECT2"),
+#   make_df(ALBA4_split$train_pos, 1, "ALBA4"),
+#   make_df(ALBA4_split$train_neg, 0, "ALBA4")
+# )
+# 
+# # Validation set (1%)
+# df_val <- combine_shuffle_sample(
+#   make_df(ECT2_split$val_pos, 1, "ECT2"),
+#   make_df(ECT2_split$val_neg, 0, "ECT2"),
+#   make_df(ALBA4_split$val_pos, 1, "ALBA4"),
+#   make_df(ALBA4_split$val_neg, 0, "ALBA4")
+# )
+# 
+# # Test set (1%)
+# df_test <- combine_shuffle_sample(
+#   make_df(ECT2_split$test_pos, 1, "ECT2"),
+#   make_df(ECT2_split$test_neg, 0, "ECT2"),
+#   make_df(ALBA4_split$test_pos, 1, "ALBA4"),
+#   make_df(ALBA4_split$test_neg, 0, "ALBA4")
+# )
+# 
+# # Write to HDF5
+# h5file <- "0618_combined_data_reformerTest.h5"
+# if (file.exists(h5file)) file.remove(h5file)
+# h5createFile(h5file)
+# 
+# h5write(df_trn$seq,         h5file, "trn_seq")
+# h5write(df_trn$label,       h5file, "trn_label")
+# h5write(df_trn$prefix,      h5file, "trn_prefix")
+# h5write(df_trn$code_prefix, h5file, "trn_code_prefix")
+# 
+# h5write(df_val$seq,         h5file, "val_seq")
+# h5write(df_val$label,       h5file, "val_label")
+# h5write(df_val$prefix,      h5file, "val_prefix")
+# h5write(df_val$code_prefix, h5file, "val_code_prefix")
+# 
+# h5write(df_test$seq,         h5file, "test_seq")
+# h5write(df_test$label,       h5file, "test_label")
+# h5write(df_test$prefix,      h5file, "test_prefix")
+# h5write(df_test$code_prefix, h5file, "test_code_prefix")
+# 
+# h5closeAll()
+
+```
+
