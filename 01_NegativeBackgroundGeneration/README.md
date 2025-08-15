@@ -1,1 +1,3 @@
-
+Explore_data: explore and plot the analysis of pos and neg data
+Background_Generation: background generation code
+File_Format: convert .Rdat pos and neg samples to h5 file and generate the format which can fit the model training
